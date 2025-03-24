@@ -632,13 +632,13 @@
           vec3 arcColor = uColorArc;
           
           // Color modification based on position and time
-          float colorMod = sin(angle * 5.0 + time + layerIndex / layerTotal * PI * 2.0) * 0.5 + 0.5;
+          float colorMod = sin(angle * 2.0 + time + layerIndex / layerTotal * PI * 2.0) * 0.5 + 0.5;
           vec3 layerColor = mix(baseColor, arcColor, colorMod);
           
           // Color modification based on sound
           if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.3) {
             // Enhanced brightness factor for better beat visualization
-            float brightnessFactor = mix(1.2, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
+            float brightnessFactor = mix(1.1, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
             layerColor = mix(layerColor, vec3(1.0), audioLevel * 0.8 * uColorReactivity * brightnessFactor);
           }
           
@@ -676,11 +676,17 @@
             }
           } else {
             // Standard mode - smoother zoom based on audio
-            zoomFactor = 1.0 + audioEffect * 0.5;
+              float beatStrength = 1.0 - smoothstep(0.0, 0.5, uTimeSinceLastBeat);
+              float zoomPulse = 1.0 + beatStrength * 1.2 * uAudioReactivity;
+              
+              // Add extra boost for significant beats (like louder claps)
+              zoomPulse += beatStrength + 1.5 * uAudioVolume;
+              
+              zoomFactor = zoomPulse ;
           }
           
           // Apply zoom
-          float pulsatingZoom = uZoom * zoomFactor;
+          float pulsatingZoom = uZoom + zoomFactor;
           uv = uv / pulsatingZoom;
           
           // Generate multi-layered electric tunnel
