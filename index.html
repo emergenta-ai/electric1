@@ -152,12 +152,12 @@
       
       // Get WebGL context
       const gl = canvas.getContext('webgl', {
-        alpha: false,           // Wyłączenie przeźroczystości dla lepszej wydajności
-        depth: false,           // Brak potrzeby bufora głębi
-        stencil: false,         // Brak potrzeby bufora szablonu
-        antialias: false,       // Wyłączenie antyaliasingu dla lepszej wydajności
-        premultipliedAlpha: false,  // Brak potrzeby mnożenia dla przezroczystości
-        preserveDrawingBuffer: false // Brak potrzeby zachowania bufora rysowania
+        alpha: false,
+        depth: false,
+        stencil: false,
+        antialias: false,
+        premultipliedAlpha: false,
+        preserveDrawingBuffer: false
       });
       
       if (!gl) {
@@ -195,14 +195,14 @@
       let beatDetected = false;
       let lastVolume = 0;
       let volumeDelta = 0;
-      let volumeHistory = Array(8).fill(0);
+      let volumeHistory = Array(16).fill(0); // Increased history size for better beat detection
       let beatHistory = Array(8).fill(false);
       let angleBeatEnabled = false;
       
       // Color parameters for shaders
       let colorBase = hexToRGB('#120576'); 
       let colorArc = hexToRGB('#2f1609');  
-      let colorBackground = hexToRGB('#000033'); // Bardzo ciemne tło
+      let colorBackground = hexToRGB('#000033');
       
       // Color Input Event Listeners
       document.getElementById('colorBase').addEventListener('input', function() {
@@ -241,10 +241,13 @@
       const defaultAngleChange = 0.5;
       
       // Define audio processing constants globally
-      const BEAT_THRESHOLD = 0.08; // Jeszcze bardziej obniżony próg dla lepszego wykrywania klaskania
-      const BEAT_MIN_INTERVAL = 200; // ms
+      const BEAT_THRESHOLD = 0.05; // Adjusted threshold for better clap detection
+      const BEAT_HOLD_FRAMES = 4; // How many frames to hold a beat state
+      const BEAT_MIN_INTERVAL = 150; // Reduced for more responsive clap detection
       let lastBeatTime = 0;
-      let timeSinceLastBeat = 1.0; // Znormalizowany czas od ostatniego beatu (0-1)
+      let timeSinceLastBeat = 1.0;
+      let beatHoldCounter = 0;
+      let significantBeats = 0; // Count significant beats for added reactivity
       
       // Function to analyze audio data
       function analyzeAudio() {
@@ -258,57 +261,93 @@
           let sum = 0;
           let bassBins = 0;
           let bassSum = 0;
+          let midSum = 0;
+          let highSum = 0;
+          
+          // Calculate band-specific energy for better beat detection
           for (let i = 0; i < audioDataArray.length; i++) {
-            sum += audioDataArray[i];
+            const value = audioDataArray[i];
+            sum += value;
             
-            // Calculate bass frequencies separately (first 1/4 of bins typically)
-            if (i < audioDataArray.length / 4) {
-              bassSum += audioDataArray[i];
+            // Low frequencies (bass)
+            if (i < audioDataArray.length / 5) {
+              bassSum += value;
               bassBins++;
+            } 
+            // Mid frequencies
+            else if (i < audioDataArray.length / 5 * 3) {
+              midSum += value;
+            }
+            // High frequencies
+            else {
+              highSum += value;
             }
           }
-          let avg = sum / audioDataArray.length;
+          
+          const avgTotal = sum / audioDataArray.length;
+          const avgBass = bassSum / (bassBins || 1);
+          const avgMid = midSum / (audioDataArray.length / 5 * 2 || 1);
+          const avgHigh = highSum / (audioDataArray.length / 5 * 2 || 1);
           
           // Store previous volume for delta calculation
           lastVolume = audioVolume;
           
-          // Normalize to 0-1 range with safety limiter to prevent crashes
-          const rawVolume = avg / 255;
+          // Apply soft limiter with sigmoid function
+          const rawVolume = avgTotal / 255;
+          const limitedVolume = 1 / (1 + Math.exp(-6 * (rawVolume - 0.3))) * 0.95;
           
-          // Apply soft limiter with sigmoid function to prevent extreme values
-          const limitedVolume = 1 / (1 + Math.exp(-5 * (rawVolume - 0.5))) * 0.95;
-          
-          // Apply temporal smoothing to prevent sudden spikes
-          audioVolume = audioVolume * 0.3 + limitedVolume * 0.7;
+          // Apply temporal smoothing with more weight to current reading for quicker response
+          audioVolume = audioVolume * 0.2 + limitedVolume * 0.8;
           
           // Calculate volume change with limiting
-          const rawDelta = audioVolume - lastVolume;
-          volumeDelta = Math.max(-0.3, Math.min(0.3, rawDelta));
+          volumeDelta = Math.max(-0.3, Math.min(0.3, audioVolume - lastVolume));
           
           // Shift volume history
           volumeHistory.shift();
           volumeHistory.push(audioVolume);
           
-          // Beat detection with improved stability
+          // Calculate recent average and standard deviation
+          const recentVols = volumeHistory.slice(-8);
+          const avgHistory = recentVols.reduce((sum, vol) => sum + vol, 0) / recentVols.length;
+          
+          // Calculate dynamic threshold based on recent volume
+          let dynamicThreshold = BEAT_THRESHOLD;
+          // Increase threshold if recent volume is high
+          if (avgHistory > 0.3) {
+            dynamicThreshold *= 1.5;
+          }
+          
+          // Beat detection with improved algorithm
           const now = Date.now();
-          const prevBeatDetected = beatDetected;
           beatDetected = false;
           
-          const avgHistory = volumeHistory.reduce((sum, vol) => sum + vol, 0) / volumeHistory.length;
-          
-          if (
-            audioVolume > 0.15 && // Minimum volume threshold
-            volumeDelta > BEAT_THRESHOLD && // Sudden increase
-            audioVolume > avgHistory * 1.15 && // Higher than recent average
+          if (beatHoldCounter > 0) {
+            beatHoldCounter--;
+            beatDetected = true;
+          } else if (
+            audioVolume > 0.1 && // Minimum volume threshold
+            volumeDelta > dynamicThreshold && // Sudden increase
+            audioVolume > avgHistory * 1.1 && // Higher than recent average
             now - lastBeatTime > BEAT_MIN_INTERVAL // Not too soon after last beat
           ) {
             beatDetected = true;
+            beatHoldCounter = BEAT_HOLD_FRAMES;
             lastBeatTime = now;
-            timeSinceLastBeat = 0.0; // Reset tween timer
+            timeSinceLastBeat = 0.0;
+            
+            // Count significant beats for added reactivity
+            if (volumeDelta > dynamicThreshold * 1.5) {
+              significantBeats = Math.min(significantBeats + 1, 10);
+            }
           } else {
-            // Aktualizuj czas od ostatniego uderzenia (dla efektu tweenu)
-            const beatTweenDuration = 1000; // 1 sekunda na powrót do normalnego zoomu
+            // Update time since last beat (for tween effect)
+            const beatTweenDuration = 800; // 0.8 seconds for tween effect
             timeSinceLastBeat = Math.min(1.0, (now - lastBeatTime) / beatTweenDuration);
+            
+            // Gradually reduce significant beats counter
+            if (now - lastBeatTime > 2000) { // After 2 seconds of no beats
+              significantBeats = Math.max(0, significantBeats - 0.05);
+            }
           }
           
           // Shift beat history
@@ -323,7 +362,6 @@
           
           return audioVolume;
         } catch (error) {
-          // Error recovery to prevent crashes
           console.error('Audio analysis error:', error);
           return 0.1;
         }
@@ -336,27 +374,31 @@
           audioContext = new (window.AudioContext || window.webkitAudioContext)();
           analyser = audioContext.createAnalyser();
           
-          // Configure analyzer with more stable settings for beat detection
-          analyser.fftSize = 512; // Większa dokładność
-          analyser.smoothingTimeConstant = 0.7; // Mniejsze wygładzanie dla lepszego wychwytywania beatów
-          analyser.minDecibels = -70; // Lepsze wykrywanie cichszych dźwięków
+          // Configure analyzer with settings optimized for clap detection
+          analyser.fftSize = 1024; // Higher resolution
+          analyser.smoothingTimeConstant = 0.5; // Less smoothing for better transient detection
+          analyser.minDecibels = -70;
           analyser.maxDecibels = -30;
           
           audioDataArray = new Uint8Array(analyser.frequencyBinCount);
           
-          // Connect microphone with error handling
-          navigator.mediaDevices.getUserMedia({audio: true})
+          // Connect microphone
+          navigator.mediaDevices.getUserMedia({audio: {
+            echoCancellation: false, // Disable echo cancellation for better transient response
+            noiseSuppression: false, // Disable noise suppression
+            autoGainControl: false  // Disable automatic gain control
+          }})
             .then(function(stream) {
               try {
                 microphone = audioContext.createMediaStreamSource(stream);
                 
-                // Add a compressor to prevent peaks
+                // Add a compressor to prevent peaks but with settings better for transients
                 const compressor = audioContext.createDynamicsCompressor();
                 compressor.threshold.value = -24;
-                compressor.knee.value = 30;
-                compressor.ratio.value = 12;
-                compressor.attack.value = 0.003;
-                compressor.release.value = 0.25;
+                compressor.knee.value = 20;
+                compressor.ratio.value = 8; // Lower ratio for better transient response
+                compressor.attack.value = 0.001; // Faster attack to catch transients
+                compressor.release.value = 0.2;
                 
                 microphone.connect(compressor);
                 compressor.connect(analyser);
@@ -365,7 +407,7 @@
                 document.getElementById('audioEnable').textContent = 'Audio Reactive Mode Enabled!';
                 document.getElementById('audioEnable').style.background = 'linear-gradient(to right, #00ff99, #ff00ff)';
                 
-                console.log('Audio reactive mode successfully enabled with safety limiters.');
+                console.log('Audio reactive mode successfully enabled with optimized clap detection.');
               } catch (setupError) {
                 console.error('Error setting up audio processing chain:', setupError);
                 alert('Error initializing audio processor. Try refreshing the page.');
@@ -384,14 +426,12 @@
       // Audio enable button
       document.getElementById('audioEnable').addEventListener('click', setupAudio);
       
-      // Wymuszenie 60fps animacji z rAF
+      // Ensure smooth animation
       let rafHandle;
       function enforceFrameRate() {
-        // Zapewnienie, że zawsze mamy aktywny requestAnimationFrame
         if (rafHandle) cancelAnimationFrame(rafHandle);
         rafHandle = requestAnimationFrame(enforceFrameRate);
       }
-      // Uruchomienie w tle dla płynniejszej animacji
       enforceFrameRate();
       
       // Audio reactivity slider
@@ -497,6 +537,7 @@
         uniform vec3 uColorBackground;
         uniform float uLastBeatTime;
         uniform float uTimeSinceLastBeat;
+        uniform float uSignificantBeats;
         
         // Constants
         const float PI = 3.14159265359;
@@ -534,6 +575,12 @@
           return f;
         }
         
+        // Improved beat response function with smoother animation
+        float beatResponse(float timeSince, float intensity) {
+          // Smoother easing function for beat response
+          return intensity * (1.0 - smoothstep(0.0, 0.8, timeSince));
+        }
+        
         // Electric tunnel function
         vec3 generateTunnelLayer(vec2 uv, float time, float layerIndex, float layerTotal, float audioLevel) {
           // Dynamic perspective with multiple layers, modified by audio
@@ -549,7 +596,7 @@
           
           // Add rotation on beat (if enabled)
           if (uAngleBeat > 0.5 && uBeatDetected > 0.5) {
-            angle += PI * 0.05 * uAudioReactivity; // Bardzo mały skok rotacji na beat
+            angle += PI * 0.1 * uAudioReactivity * (1.0 - uTimeSinceLastBeat); // Smooth rotation on beat
           }
           
           // Electric arc effect and distortion
@@ -564,12 +611,18 @@
                              (0.05 + audioLevel * 0.2 * uDistortionLevel);
           dist += distortion;
           
+          // Beat-reactive distortion
+          if (uBeatDetected > 0.5) {
+            dist += sin(angle * 20.0) * 0.02 * (1.0 - uTimeSinceLastBeat) * uAudioReactivity;
+          }
+          
           // Tunnel effect with multi-layered perspective and subtle audio influence
           float tunnelWidth = 0.2;
           float tunnel = 0.15 / (abs(mod(dist, tunnelWidth) - tunnelWidth * 0.5) + 0.01);
           
           // Tunnel intensity dependent on settings and audio
-          tunnel *= (1.0 + audioLevel * uAudioReactivity * uTunnelIntensity);
+          float beatEffect = uBeatDetected > 0.5 ? 0.5 * (1.0 - uTimeSinceLastBeat) : 0.0;
+          tunnel *= (1.0 + audioLevel * uAudioReactivity * uTunnelIntensity + beatEffect);
           
           // Electric arc effect with color mixing
           float arcEffect = pow(max(0.0, 1.0 - dist), 2.0) * (1.0 + audioLevel * 0.5 * uAudioReactivity);
@@ -584,7 +637,7 @@
           
           // Color modification based on sound
           if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.3) {
-            // Silniejsze rozjaśnienie koloru po beacie, które szybko zanika
+            // Enhanced brightness factor for better beat visualization
             float brightnessFactor = mix(5.0, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
             layerColor = mix(layerColor, vec3(1.0), audioLevel * 0.8 * uColorReactivity * brightnessFactor);
           }
@@ -606,13 +659,23 @@
           // Audio level
           float audioEffect = uAudioVolume * uAudioReactivity;
           
-          // Zoom based on beat or audio
+          // Enhanced zoom based on beat detection for better clap response
           float zoomFactor = 1.0;
           
-          // Zoom on beat
-          if (uBeatMode > 0.5 && uBeatDetected > 0.5) {
-            zoomFactor = 1.0 + audioEffect * 1.5;
+          // Only apply beat-based zoom if the feature is enabled
+          if (uBeatMode > 0.5) {
+            if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.5) {
+              // Strong zoom pulse on beat that gradually fades
+              float beatStrength = 1.0 - smoothstep(0.0, 0.5, uTimeSinceLastBeat);
+              float zoomPulse = 1.0 + beatStrength * 1.5 * uAudioReactivity;
+              
+              // Add extra boost for significant beats (like louder claps)
+              zoomPulse += uSignificantBeats * 0.1 * beatStrength;
+              
+              zoomFactor = zoomPulse;
+            }
           } else {
+            // Standard mode - smoother zoom based on audio
             zoomFactor = 1.0 + audioEffect * 0.5;
           }
           
@@ -639,14 +702,14 @@
           
           finalColor /= totalWeight;
           
-          // Zwiększenie jasności na beat
+          // Enhanced brightness on beat
           if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.3) {
-            // Silne rozjaśnienie kolorów po beacie, które szybko zanika
+            // Strong color enhancement after beat that quickly fades
             float brightnessFactor = mix(4.0, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
             finalColor *= brightnessFactor;
           }
           
-          // Subtelny puls audio
+          // Subtle audio pulse
           float pulseEffect = 1.0 + sin(uTime * 5.0) * uAudioVolume * 0.1;
           finalColor *= pulseEffect;
           
