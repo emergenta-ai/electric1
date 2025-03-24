@@ -241,9 +241,9 @@
       const defaultAngleChange = 0.5;
       
       // Define audio processing constants globally
-      const BEAT_THRESHOLD = 0.05; // Adjusted threshold for better clap detection
-      const BEAT_HOLD_FRAMES = 4; // How many frames to hold a beat state
-      const BEAT_MIN_INTERVAL = 150; // Reduced for more responsive clap detection
+      const BEAT_THRESHOLD = 0.0125; // Adjusted threshold for better clap detection
+      const BEAT_HOLD_FRAMES = 1; // How many frames to hold a beat state
+      const BEAT_MIN_INTERVAL = 50; // Reduced for more responsive clap detection
       let lastBeatTime = 0;
       let timeSinceLastBeat = 1.0;
       let beatHoldCounter = 0;
@@ -638,7 +638,7 @@
           // Color modification based on sound
           if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.3) {
             // Enhanced brightness factor for better beat visualization
-            float brightnessFactor = mix(5.0, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
+            float brightnessFactor = mix(1.2, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
             layerColor = mix(layerColor, vec3(1.0), audioLevel * 0.8 * uColorReactivity * brightnessFactor);
           }
           
@@ -705,7 +705,7 @@
           // Enhanced brightness on beat
           if (uBeatDetected > 0.5 || uTimeSinceLastBeat < 0.3) {
             // Strong color enhancement after beat that quickly fades
-            float brightnessFactor = mix(4.0, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
+            float brightnessFactor = mix(2.0, 1.0, min(1.0, uTimeSinceLastBeat * 3.0));
             finalColor *= brightnessFactor;
           }
           
